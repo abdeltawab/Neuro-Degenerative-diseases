@@ -15,28 +15,51 @@ def embedd_latent_vectors(
         sessions: List[str],
         model: RNN_VAE,
         fixed: bool,
-        read_from_variable: str = "position_processed",
+        read_from_variable: str = "position_egocentric_aligned",
         tqdm_stream: Union[TqdmToLogger, None] = None) -> List[np.ndarray]
 ```
 
-Embed latent vectors for the given files using the VAME model.
+#### estimate\_dbscan\_eps
+
+```python
+def estimate_dbscan_eps(data: np.ndarray, k: int = 4) -> float
+```
+
+Estimate optimal eps parameter for DBSCAN using k-distance graph method.
 
 **Parameters**
 
-* **cfg** (`dict`): Configuration dictionary.
-* **sessions** (`List[str]`): List of session names.
-* **model** (`RNN_VAE`): VAME model.
-* **fixed** (`bool`): Whether the model is fixed.
-* **tqdm_stream** (`TqdmToLogger, optional`): TQDM Stream to redirect the tqdm output to logger.
+* **data** (`np.ndarray`): Input data for clustering
+* **k** (`int`): Number of nearest neighbors to consider (default: 4)
 
 **Returns**
 
-* `List[np.ndarray]`: List of latent vectors for each file.
+* `float`: Estimated eps value
+
+#### tune\_dbscan\_parameters
+
+```python
+def tune_dbscan_parameters(data: np.ndarray, cfg: dict) -> Tuple[float, int]
+```
+
+Automatically tune DBSCAN parameters for the given data.
+Uses iterative parameter testing to find optimal balance between 
+number of clusters and meaningful cluster sizes.
+
+**Parameters**
+
+* **data** (`np.ndarray`): Input data for clustering
+* **cfg** (`dict`): Configuration dictionary
+
+**Returns**
+
+* `Tuple[float, int]`: Tuned (eps, min_samples) parameters
 
 #### get\_motif\_usage
 
 ```python
-def get_motif_usage(session_labels: np.ndarray, n_clusters: int) -> np.ndarray
+def get_motif_usage(session_labels: np.ndarray,
+                    n_clusters: int = None) -> np.ndarray
 ```
 
 Count motif usage from session label array.
@@ -44,11 +67,12 @@ Count motif usage from session label array.
 **Parameters**
 
 * **session_labels** (`np.ndarray`): Array of session labels.
-* **n_clusters** (`int`): Number of clusters.
+* **n_clusters** (`int, optional`): Number of clusters. For KMeans and HMM, this should be set to get fixed-length output.
+For DBSCAN, leave as None to infer cluster count dynamically (excluding noise -1).
 
 **Returns**
 
-* `np.ndarray`: Array of motif usage counts.
+* `np.ndarray`: Motif usage counts. Length = n_clusters for fixed methods, or dynamic for DBSCAN.
 
 #### same\_segmentation
 
@@ -59,40 +83,30 @@ def same_segmentation(
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]
 ```
 
-Apply the same segmentation to all animals.
+Apply the same segmentation (shared clustering) to all sessions using the specified algorithm.
 
 **Parameters**
 
 * **cfg** (`dict`): Configuration dictionary.
 * **sessions** (`List[str]`): List of session names.
-* **latent_vectors** (`List[np.ndarray]`): List of latent vector arrays.
-* **n_clusters** (`int`): Number of clusters.
-* **segmentation_algorithm** (`str`): Segmentation algorithm.
+* **latent_vectors** (`List[np.ndarray]`): List of latent vector arrays per session.
+* **n_clusters** (`int`): Number of clusters (only used for KMeans and HMM).
+* **segmentation_algorithm** (`str`): One of: &quot;kmeans&quot;, &quot;hmm&quot;, or &quot;dbscan&quot;.
 
 **Returns**
 
-* `Tuple`: Tuple of labels, cluster centers, and motif usages.
+* `Tuple of:`: - labels: List of np.ndarray of predicted motif labels per session.
+- cluster_centers: List of cluster centers (KMeans only).
+- motif_usages: List of motif usage arrays per session.
 
 #### individual\_segmentation
 
 ```python
-def individual_segmentation(cfg: dict, sessions: List[str],
-                            latent_vectors: List[np.ndarray],
-                            n_clusters: int) -> Tuple
+def individual_segmentation(
+    cfg: dict, sessions: List[str], latent_vectors: List[np.ndarray],
+    n_clusters: int, segmentation_algorithm: str
+) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]
 ```
-
-Apply individual segmentation to each session.
-
-**Parameters**
-
-* **cfg** (`dict`): Configuration dictionary.
-* **sessions** (`List[str]`): List of session names.
-* **latent_vectors** (`List[np.ndarray]`): List of latent vector arrays.
-* **n_clusters** (`int`): Number of clusters.
-
-**Returns**
-
-* `Tuple`: Tuple of labels, cluster centers, and motif usages.
 
 #### segment\_session
 
@@ -100,40 +114,4 @@ Apply individual segmentation to each session.
 @save_state(model=SegmentSessionFunctionSchema)
 def segment_session(config: dict, save_logs: bool = False) -> None
 ```
-
-Perform pose segmentation using the VAME model.
-Fills in the values in the &quot;segment_session&quot; key of the states.json file.
-Creates files at:
-- project_name/
-    - results/
-        - hmm_trained.pkl
-        - session/
-            - model_name/
-                - hmm-n_clusters/
-                    - latent_vector_session.npy
-                    - motif_usage_session.npy
-                    - n_cluster_label_session.npy
-                - kmeans-n_clusters/
-                    - latent_vector_session.npy
-                    - motif_usage_session.npy
-                    - n_cluster_label_session.npy
-                    - cluster_center_session.npy
-
-latent_vector_session.npy contains the projection of the data into the latent space,
-for each frame of the video. Dimmentions: (n_frames, n_latent_features)
-
-motif_usage_session.npy contains the number of times each motif was used in the video.
-Dimmentions: (n_motifs,)
-
-n_cluster_label_session.npy contains the label of the cluster assigned to each frame.
-Dimmentions: (n_frames,)
-
-**Parameters**
-
-* **config** (`dict`): Configuration dictionary.
-* **save_logs** (`bool, optional`): Whether to save logs, by default False.
-
-**Returns**
-
-* `None`
 
