@@ -1,0 +1,91 @@
+project_name: My Project
+model_name: VAME
+n_clusters: 15
+pose_confidence: 0.99
+
+# Project path and videos
+project_path: "C:\\Users\\hafij\\Downloads\\VAME-0.7.0\\VAME-0.7.0\\Demo\\My Project"
+session_names:
+  - "Bottom view camera"
+
+# Data
+all_data: "yes"
+
+# Creation of train set:
+egocentric_data: false
+robust: true
+iqr_factor: 4
+axis: None
+savgol_filter: true
+savgol_length: 5
+savgol_order: 2
+test_fraction: 0.1
+
+# RNN model general hyperparameter:
+pretrained_model: None
+pretrained_weights: false
+num_features: 18
+batch_size: 10
+max_epochs: 10
+model_snapshot: 2
+model_convergence: 50
+transition_function: GRU
+beta: 1
+beta_norm: false
+zdims: 30
+learning_rate: 0.0005
+time_window: 30
+prediction_decoder: 1
+prediction_steps: 15
+noise: false
+scheduler: 1
+scheduler_step_size: 100
+scheduler_gamma: 0.2
+scheduler_threshold:
+softplus: false
+
+# Segmentation:
+segmentation_algorithms:
+  - hmm
+  - kmeans
+hmm_trained: false
+load_data: -PE-seq-clean
+individual_segmentation: false
+random_state_kmeans: 42
+n_init_kmeans: 15
+read_from_variable: "position_egocentric_aligned"  # Add here
+
+# Video writer:
+length_of_motif_video: 1000
+
+# UMAP parameter:
+min_dist: 0.1
+n_neighbors: 200
+random_state: 42
+num_points: 30000
+
+# RNN encoder hyperparameter:
+hidden_size_layer_1: 256
+hidden_size_layer_2: 256
+dropout_encoder: 0
+
+# RNN reconstruction hyperparameter:
+hidden_size_rec: 256
+dropout_rec: 0
+n_layers: 1
+
+# RNN prediction hyperparameter:
+hidden_size_pred: 256
+dropout_pred: 0
+
+# RNN loss hyperparameter:
+mse_reconstruction_reduction: sum
+mse_prediction_reduction: sum
+kmeans_loss: 30
+kmeans_lambda: 0.1
+anneal_function: linear
+kl_start: 2
+annealtime: 4
+creation_datetime: '2025-01-12T04:36:41+00:00'
+pose_estimation_filetype: csv
+paths_to_pose_nwb_series_data:

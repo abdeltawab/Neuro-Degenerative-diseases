@@ -1,0 +1,13 @@
+# VAME.yaml
+#
+# install: conda env create -f VAME.yaml
+# update:  conda env update -f VAME.yaml
+name: vame
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements.txt
+      - .

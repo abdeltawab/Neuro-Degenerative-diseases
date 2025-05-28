@@ -1,0 +1,7 @@
+[LOGGING STARTED AT: 2025-01-19 16-12-44]2025-01-19 16:12:44.897 INFO  --- [MainThread] vame.analysis.generative_functions : 254 : Running generative model with mode sampling...
+2025-01-19 16:12:44.897 ERROR --- [MainThread] vame.analysis.generative_functions : 344 : 'model_name'
+Traceback (most recent call last):
+  File "C:\Users\hafij\Downloads\VAME-0.7.0\VAME-0.7.0\src\vame\analysis\generative_functions.py", line 255, in generative_model
+    model_name = config["model_name"]
+                 ~~~~~~^^^^^^^^^^^^^^
+KeyError: 'model_name'
