@@ -11,11 +11,11 @@ title: preprocessing.cleaning
 
 ```python
 def lowconf_cleaning(config: dict,
-                     read_from_variable: str = "position_processed",
+                     read_from_variable: str = "position_egocentric_aligned",
                      save_to_variable: str = "position_processed") -> None
 ```
 
-Clean the low confidence data points from the dataset. Processes position data by:
+Clean the low-confidence data points from the dataset. Processes position data by:
  - setting low-confidence points to NaN
  - interpolating NaN points
 

@@ -14,7 +14,7 @@ def egocentrically_align_and_center(
         config: dict,
         centered_reference_keypoint: str = "snout",
         orientation_reference_keypoint: str = "tailbase",
-        read_from_variable: str = "position_processed",
+        read_from_variable: str = "position_egocentric_aligned",
         save_to_variable: str = "position_egocentric_aligned") -> None
 ```
 
@@ -23,7 +23,7 @@ and then applying rotation to align with the line connecting the two keypoints.
 
 **Parameters**
 
-* **config** (`dict`): Configuration dictionary
+* **config** (`dict`): Configuration dictionary.
 * **centered_reference_keypoint** (`str`): Name of the keypoint to use as centered reference.
 * **orientation_reference_keypoint** (`str`): Name of the keypoint to use as orientation reference.
 

@@ -11,7 +11,7 @@ title: preprocessing.filter
 
 ```python
 def savgol_filtering(config: dict,
-                     read_from_variable: str = "position_processed",
+                     read_from_variable: str = "position_egocentric_aligned",
                      save_to_variable: str = "position_processed") -> None
 ```
 
