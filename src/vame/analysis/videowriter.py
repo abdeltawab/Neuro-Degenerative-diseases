@@ -21,6 +21,60 @@ logger_config = VameLogger(__name__)
 logger = logger_config.logger
 
 
+def get_cluster_label_file_path(
+    path_to_file: str,
+    session: str,
+    n_clusters: int,
+    segmentation_algorithm: SegmentationAlgorithms,
+    flag: str,
+) -> str:
+    """
+    Get the path to the cluster label file based on segmentation algorithm.
+    
+    Parameters
+    ----------
+    path_to_file : str
+        Base path to the file directory
+    session : str
+        Session name
+    n_clusters : int
+        Number of clusters (used for kmeans/hmm, ignored for dbscan)
+    segmentation_algorithm : SegmentationAlgorithms
+        Segmentation algorithm used
+    flag : str
+        Flag indicating motif or community
+        
+    Returns
+    -------
+    str
+        Path to the label file
+    """
+    if flag == "motif":
+        if segmentation_algorithm == "dbscan":
+            # DBSCAN uses different naming convention without n_clusters
+            label_file = f"dbscan_label_{session}.npy"
+        else:
+            # HMM and KMeans use n_clusters in filename
+            label_file = f"{n_clusters}_{segmentation_algorithm}_label_{session}.npy"
+        
+        return os.path.join(path_to_file, label_file)
+    
+    elif flag == "community":
+        # Community logic remains the same for all algorithms
+        if cohort:
+            return os.path.join(
+                path_to_file,
+                "community",
+                f"cohort_community_label_{session}.npy",
+            )
+        else:
+            return os.path.join(
+                path_to_file,
+                "community", 
+                f"community_label_{session}.npy",
+            )
+
+
 def create_cluster_videos(
     config: dict,
     path_to_file: str,
@@ -51,7 +105,7 @@ def create_cluster_videos(
     flag : str
         Flag indicating the type of video (motif or community).
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     output_video_type : str, optional
@@ -68,13 +122,12 @@ def create_cluster_videos(
 
     if flag == "motif":
         logger.info("Motif videos getting created for " + session + " ...")
-        labels = np.load(
-            os.path.join(
-                path_to_file,
-                str(n_clusters) + "_" + segmentation_algorithm + "_label_" + session + ".npy",
-            )
+        label_file_path = get_cluster_label_file_path(
+            path_to_file, session, n_clusters, segmentation_algorithm, flag
         )
-    if flag == "community":
+        labels = np.load(label_file_path)
+        
+    elif flag == "community":
         if cohort:
             logger.info("Cohort community videos getting created for " + session + " ...")
             labels = np.load(
@@ -109,6 +162,12 @@ def create_cluster_videos(
 
     cluster_start = config["time_window"] / 2
     unique_labels, count_labels = np.unique(labels, return_counts=True)
+    
+    # Filter out noise for DBSCAN (label -1)
+    if segmentation_algorithm == "dbscan":
+        # Remove noise label (-1) from unique_labels
+        unique_labels = unique_labels[unique_labels != -1]
+        logger.info(f"DBSCAN found {len(unique_labels)} clusters (excluding noise)")
 
     for cluster in unique_labels:
         logger.info("Cluster: %d" % (cluster))
@@ -162,6 +221,28 @@ def create_cluster_videos(
     capture.release()
 
 
+def get_segmentation_path(segmentation_algorithm: SegmentationAlgorithms, n_clusters: int) -> str:
+    """
+    Get the segmentation path based on algorithm type.
+    
+    Parameters
+    ----------
+    segmentation_algorithm : SegmentationAlgorithms
+        The segmentation algorithm used
+    n_clusters : int
+        Number of clusters (ignored for DBSCAN)
+        
+    Returns
+    -------
+    str
+        Path suffix for the algorithm
+    """
+    if segmentation_algorithm == "dbscan":
+        return "dbscan"
+    else:
+        return f"{segmentation_algorithm}-{n_clusters}"
+
+
 @save_state(model=MotifVideosFunctionSchema)
 def motif_videos(
     config: dict,
@@ -178,7 +259,7 @@ def motif_videos(
         - results/
             - session/
                 - model_name/
-                    - segmentation_algorithm-n_clusters/
+                    - segmentation_algorithm-n_clusters/ (or just 'dbscan' for DBSCAN)
                         - cluster_videos/
                             - session-motif_0.mp4
                             - session-motif_1.mp4
@@ -189,7 +270,7 @@ def motif_videos(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
     video_type : str, optional
         Type of video. Default is '.mp4'.
     output_video_type : str, optional
@@ -221,14 +302,21 @@ def motif_videos(
                 action_message="write motif videos",
             )
 
-        logger.info("Cluster size is: %d " % n_clusters)
+        if segmentation_algorithm == "dbscan":
+            logger.info("Creating DBSCAN cluster videos (dynamic cluster count)")
+        else:
+            logger.info("Cluster size is: %d " % n_clusters)
+            
         for session in sessions:
+            # Get the correct segmentation path
+            segmentation_path = get_segmentation_path(segmentation_algorithm, n_clusters)
+            
             path_to_file = os.path.join(
                 config["project_path"],
                 "results",
                 session,
                 model_name,
-                segmentation_algorithm + "-" + str(n_clusters),
+                segmentation_path,
                 "",
             )
             if not os.path.exists(os.path.join(path_to_file, "cluster_videos")):
@@ -275,7 +363,7 @@ def community_videos(
         - results/
             - file_name/
                 - model_name/
-                    - segmentation_algorithm-n_clusters/
+                    - segmentation_algorithm-n_clusters/ (or just 'dbscan' for DBSCAN)
                         - community_videos/
                             - file_name-community_0.mp4
                             - file_name-community_1.mp4
@@ -286,7 +374,7 @@ def community_videos(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     video_type : str, optional
@@ -319,14 +407,21 @@ def community_videos(
                 action_message="write community videos",
             )
 
-        logger.info("Cluster size is: %d " % n_clusters)
+        if segmentation_algorithm == "dbscan":
+            logger.info("Creating DBSCAN community videos (dynamic cluster count)")
+        else:
+            logger.info("Cluster size is: %d " % n_clusters)
+            
         for session in sessions:
+            # Get the correct segmentation path
+            segmentation_path = get_segmentation_path(segmentation_algorithm, n_clusters)
+            
             path_to_file = os.path.join(
                 config["project_path"],
                 "results",
                 session,
                 model_name,
-                segmentation_algorithm + "-" + str(n_clusters),
+                segmentation_path,
                 "",
             )
             if not os.path.exists(os.path.join(path_to_file, "community_videos")):

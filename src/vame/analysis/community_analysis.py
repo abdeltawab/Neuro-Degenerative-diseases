@@ -207,6 +207,63 @@ def augment_motif_timeseries(
     return augmented_labels, motifs_with_zero_counts
 
 
+def get_label_file_path(
+    config: dict,
+    session: str,
+    model_name: str,
+    n_clusters: int,
+    segmentation_algorithm: str,
+) -> str:
+    """
+    Get the path to the label file based on segmentation algorithm.
+    
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary
+    session : str
+        Session name
+    model_name : str
+        Model name
+    n_clusters : int
+        Number of clusters (ignored for DBSCAN)
+    segmentation_algorithm : str
+        Segmentation algorithm
+        
+    Returns
+    -------
+    str
+        Path to the label file
+    """
+    if segmentation_algorithm == "dbscan":
+        # DBSCAN uses different path structure
+        path_to_dir = os.path.join(
+            config["project_path"],
+            "results",
+            session,
+            model_name,
+            "dbscan",
+            "",
+        )
+        file_path = os.path.join(path_to_dir, f"dbscan_label_{session}.npy")
+    else:
+        # HMM and KMeans use n_clusters in path
+        path_to_dir = os.path.join(
+            config["project_path"],
+            "results",
+            session,
+            model_name,
+            segmentation_algorithm + "-" + str(n_clusters),
+            "",
+        )
+        file_path = os.path.join(
+            path_to_dir,
+            str(n_clusters) + "_" + segmentation_algorithm + "_label_" + session + ".npy",
+        )
+    
+    return file_path
+
+
 def get_motif_labels(
     config: dict,
     sessions: List[str],
@@ -228,7 +285,7 @@ def get_motif_labels(
     n_clusters : int
         Number of clusters.
     segmentation_algorithm : str
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
 
     Returns
     -------
@@ -239,20 +296,13 @@ def get_motif_labels(
     # Is this intended behavior? and why?
     shapes = []
     for session in sessions:
-        path_to_dir = os.path.join(
-            config["project_path"],
-            "results",
-            session,
-            model_name,
-            segmentation_algorithm + "-" + str(n_clusters),
-            "",
-        )
-        file_labels = np.load(
-            os.path.join(
-                path_to_dir,
-                str(n_clusters) + "_" + segmentation_algorithm + "_label_" + session + ".npy",
-            )
-        )
+        file_path = get_label_file_path(config, session, model_name, n_clusters, segmentation_algorithm)
+        file_labels = np.load(file_path)
+        
+        # For DBSCAN, filter out noise (-1) labels
+        if segmentation_algorithm == "dbscan":
+            file_labels = file_labels[file_labels != -1]
+        
         shape = len(file_labels)
         shapes.append(shape)
     shapes = np.array(shapes)
@@ -260,23 +310,51 @@ def get_motif_labels(
 
     community_label = []
     for session in sessions:
-        path_to_dir = os.path.join(
-            config["project_path"],
-            "results",
-            session,
-            model_name,
-            segmentation_algorithm + "-" + str(n_clusters),
-            "",
-        )
-        file_labels = np.load(
-            os.path.join(
-                path_to_dir,
-                str(n_clusters) + "_" + segmentation_algorithm + "_label_" + session + ".npy",
-            )
-        )[:min_frames]
+        file_path = get_label_file_path(config, session, model_name, n_clusters, segmentation_algorithm)
+        file_labels = np.load(file_path)
+        
+        # For DBSCAN, filter out noise (-1) labels
+        if segmentation_algorithm == "dbscan":
+            file_labels = file_labels[file_labels != -1]
+        
+        file_labels = file_labels[:min_frames]
         community_label.extend(file_labels)
     community_label = np.array(community_label)
     return community_label
+
+
+def remap_dbscan_labels(labels: np.ndarray) -> Tuple[np.ndarray, dict, int]:
+    """
+    Remap DBSCAN labels to sequential integers starting from 0.
+    
+    Parameters
+    ----------
+    labels : np.ndarray
+        Original DBSCAN labels (can be non-sequential, e.g., [0, 48, 49, 50])
+        
+    Returns
+    -------
+    Tuple[np.ndarray, dict, int]
+        - Remapped labels (sequential from 0)
+        - Mapping dictionary {original_label: new_label}
+        - Number of unique clusters
+    """
+    # Remove noise (-1) if present
+    unique_labels = np.unique(labels[labels != -1])
+    n_clusters = len(unique_labels)
+    
+    # Create mapping from original to sequential
+    label_mapping = {orig: new for new, orig in enumerate(sorted(unique_labels))}
+    
+    # Apply mapping
+    remapped_labels = np.zeros_like(labels)
+    for orig_label, new_label in label_mapping.items():
+        remapped_labels[labels == orig_label] = new_label
+    
+    # Handle noise labels (keep as -1)
+    remapped_labels[labels == -1] = -1
+    
+    return remapped_labels, label_mapping, n_clusters
 
 
 def compute_transition_matrices(
@@ -314,7 +392,7 @@ def create_cohort_community_bag(
     trans_mat_full: np.ndarray,
     cut_tree: int | None,
     n_clusters: int,
-    segmentation_algorithm: Literal["hmm", "kmeans"],
+    segmentation_algorithm: Literal["hmm", "kmeans", "dbscan"],
 ) -> list:
     """
     Create cohort community bag for given motif labels, transition matrix,
@@ -333,7 +411,7 @@ def create_cohort_community_bag(
     n_clusters : int
         Number of clusters.
     segmentation_algorithm : str
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
 
     Returns
     -------
@@ -351,12 +429,25 @@ def create_cohort_community_bag(
         n_clusters=n_clusters,
         merge_sel=1,
     )
-    results_dir = os.path.join(
-        config["project_path"],
-        "results",
-        "community_cohort",
-        segmentation_algorithm + "-" + str(n_clusters),
-    )
+    
+    # Create appropriate results directory
+    if segmentation_algorithm == "dbscan":
+        results_dir = os.path.join(
+            config["project_path"],
+            "results",
+            "community_cohort",
+            "dbscan",
+        )
+    else:
+        results_dir = os.path.join(
+            config["project_path"],
+            "results",
+            "community_cohort",
+            segmentation_algorithm + "-" + str(n_clusters),
+        )
+    
+    os.makedirs(results_dir, exist_ok=True)
+    
     nx.write_graphml(T, os.path.join(results_dir, "tree.graphml"))
     draw_tree(
         T=T,
@@ -456,34 +547,65 @@ def save_cohort_community_labels_per_file(
     cohort_community_bag: list,
 ) -> None:
     for idx, session in enumerate(sessions):
-        path_to_dir = os.path.join(
-            config["project_path"],
-            "results",
-            session,
-            model_name,
-            segmentation_algorithm + "-" + str(n_clusters),
-            "",
-        )
-        file_labels = np.load(
-            os.path.join(
-                path_to_dir,
-                str(n_clusters) + "_" + segmentation_algorithm + "_label_" + session + ".npy",
-            )
-        )
+        file_path = get_label_file_path(config, session, model_name, n_clusters, segmentation_algorithm)
+        file_labels = np.load(file_path)
+        
+        # For DBSCAN, filter out noise (-1) labels before community analysis
+        if segmentation_algorithm == "dbscan":
+            original_labels = file_labels.copy()
+            file_labels = file_labels[file_labels != -1]
+            
         community_labels = get_cohort_community_labels(
             motif_labels=file_labels,
             cohort_community_bag=cohort_community_bag,
         )
+        
+        # Get the directory path for saving
+        if segmentation_algorithm == "dbscan":
+            path_to_dir = os.path.join(
+                config["project_path"],
+                "results",
+                session,
+                model_name,
+                "dbscan",
+                "",
+            )
+        else:
+            path_to_dir = os.path.join(
+                config["project_path"],
+                "results",
+                session,
+                model_name,
+                segmentation_algorithm + "-" + str(n_clusters),
+                "",
+            )
+        
         if not os.path.exists(os.path.join(path_to_dir, "community")):
             os.mkdir(os.path.join(path_to_dir, "community"))
-        np.save(
-            os.path.join(
-                path_to_dir,
-                "community",
-                f"cohort_community_label_{session}.npy",
-            ),
-            np.array(community_labels[0]),
-        )
+            
+        # For DBSCAN, need to map back to original indices (including noise)
+        if segmentation_algorithm == "dbscan":
+            full_community_labels = np.full_like(original_labels, -1, dtype=np.int64)
+            non_noise_mask = original_labels != -1
+            full_community_labels[non_noise_mask] = community_labels[0]
+            
+            np.save(
+                os.path.join(
+                    path_to_dir,
+                    "community",
+                    f"cohort_community_label_{session}.npy",
+                ),
+                full_community_labels,
+            )
+        else:
+            np.save(
+                os.path.join(
+                    path_to_dir,
+                    "community",
+                    f"cohort_community_label_{session}.npy",
+                ),
+                np.array(community_labels[0]),
+            )
 
 
 @save_state(model=CommunityFunctionSchema)
@@ -503,15 +625,15 @@ def community(
     - project_name/
         - results/
             - community_cohort/
-                - segmentation_algorithm-n_clusters/
+                - segmentation_algorithm-n_clusters/ (or 'dbscan' for DBSCAN)
                     - cohort_community_bag.npy
                     - cohort_community_label.npy
-                    - cohort_segmentation_algorithm_label.npy
+                    - cohort_segmentation_algorithm_label.npy (or cohort_dbscan_label.npy)
                     - cohort_transition_matrix.npy
                     - hierarchy.pkl
             - file_name/
                 - model_name/
-                    - segmentation_algorithm-n_clusters/
+                    - segmentation_algorithm-n_clusters/ (or 'dbscan' for DBSCAN)
                         - community/
                             - cohort_community_label_file_name.npy
 
@@ -520,7 +642,7 @@ def community(
         - results/
             - file_name/
                 - model_name/
-                    - segmentation_algorithm-n_clusters/
+                    - segmentation_algorithm-n_clusters/ (or 'dbscan' for DBSCAN)
                         - community/
                             - transition_matrix_file_name.npy
                             - community_label_file_name.npy
@@ -531,7 +653,7 @@ def community(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm' or 'kmeans'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     cut_tree : int, optional
@@ -562,18 +684,30 @@ def community(
 
         # Run community analysis for cohort=True
         if cohort:
-            path_to_dir = Path(
-                os.path.join(
-                    config["project_path"],
-                    "results",
-                    "community_cohort",
-                    segmentation_algorithm + "-" + str(n_clusters),
+            # Create appropriate directory path
+            if segmentation_algorithm == "dbscan":
+                path_to_dir = Path(
+                    os.path.join(
+                        config["project_path"],
+                        "results",
+                        "community_cohort",
+                        "dbscan",
+                    )
                 )
-            )
+            else:
+                path_to_dir = Path(
+                    os.path.join(
+                        config["project_path"],
+                        "results",
+                        "community_cohort",
+                        segmentation_algorithm + "-" + str(n_clusters),
+                    )
+                )
 
             if not path_to_dir.exists():
                 path_to_dir.mkdir(parents=True, exist_ok=True)
 
+            # Get motif labels
             motif_labels = get_motif_labels(
                 config=config,
                 sessions=sessions,
@@ -581,20 +715,30 @@ def community(
                 n_clusters=n_clusters,
                 segmentation_algorithm=segmentation_algorithm,
             )
+            
+            # For DBSCAN, we need to remap labels to be sequential
+            if segmentation_algorithm == "dbscan":
+                motif_labels, label_mapping, actual_n_clusters = remap_dbscan_labels(motif_labels)
+                logger.info(f"DBSCAN: Remapped {len(label_mapping)} clusters to sequential labels")
+                logger.info(f"Original -> New mapping: {label_mapping}")
+                effective_n_clusters = actual_n_clusters
+            else:
+                effective_n_clusters = n_clusters
+            
             augmented_labels, motifs_with_zero_counts = augment_motif_timeseries(
                 labels=motif_labels,
-                n_clusters=n_clusters,
+                n_clusters=effective_n_clusters,
             )
             _, trans_mat_full, _ = get_adjacency_matrix(
                 labels=augmented_labels,
-                n_clusters=n_clusters,
+                n_clusters=effective_n_clusters,
             )
             cohort_community_bag = create_cohort_community_bag(
                 config=config,
                 motif_labels=motif_labels,
                 trans_mat_full=trans_mat_full,
                 cut_tree=cut_tree,
-                n_clusters=n_clusters,
+                n_clusters=effective_n_clusters,
                 segmentation_algorithm=segmentation_algorithm,
             )
             community_labels_all = get_cohort_community_labels(
@@ -619,13 +763,25 @@ def community(
                 ),
                 community_labels_all,
             )
-            np.save(
-                os.path.join(
-                    path_to_dir,
-                    "cohort_" + segmentation_algorithm + "_label" + ".npy",
-                ),
-                motif_labels,
-            )
+            
+            # Save algorithm-specific label file
+            if segmentation_algorithm == "dbscan":
+                np.save(
+                    os.path.join(
+                        path_to_dir,
+                        "cohort_dbscan_label" + ".npy",
+                    ),
+                    motif_labels,
+                )
+            else:
+                np.save(
+                    os.path.join(
+                        path_to_dir,
+                        "cohort_" + segmentation_algorithm + "_label" + ".npy",
+                    ),
+                    motif_labels,
+                )
+                
             np.save(
                 os.path.join(
                     path_to_dir,
@@ -635,6 +791,20 @@ def community(
             )
             with open(os.path.join(path_to_dir, "hierarchy" + ".pkl"), "wb") as fp:  # Pickling
                 pickle.dump(cohort_community_bag, fp)
+
+            # Save DBSCAN label mapping if applicable
+            if segmentation_algorithm == "dbscan":
+                import json
+                mapping_file = os.path.join(path_to_dir, "dbscan_label_mapping.json")
+                with open(mapping_file, 'w') as f:
+                    # Convert numpy int keys to regular int for JSON serialization
+                    json_mapping = {int(k): int(v) for k, v in label_mapping.items()}
+                    json.dump({
+                        "original_to_sequential": json_mapping,
+                        "sequential_to_original": {int(v): int(k) for k, v in label_mapping.items()},
+                        "n_clusters": actual_n_clusters
+                    }, f, indent=2)
+                logger.info(f"DBSCAN label mapping saved to: {mapping_file}")
 
             # Added by Luiz - 11/10/2024
             # Saves the full community labels list to each of the original video files
@@ -651,152 +821,9 @@ def community(
         # # Work in Progress - cohort is False
         else:
             raise NotImplementedError("Community analysis for cohort=False is not supported yet.")
-        #     labels = get_labels(cfg, files, model_name, n_clusters, parametrization)
-        #     transition_matrices = compute_transition_matrices(
-        #         files,
-        #         labels,
-        #         n_clusters,
-        #     )
-        #     communities_all, trees = create_community_bag(
-        #         files,
-        #         labels,
-        #         transition_matrices,
-        #         cut_tree,
-        #         n_clusters,
-        #     )
-        #     community_labels_all = get_community_labels_2(
-        #         files,
-        #         labels,
-        #         communities_all,
-        #     )
-
-        #     for idx, file in enumerate(files):
-        #         path_to_dir = os.path.join(
-        #             cfg["project_path"],
-        #             "results",
-        #             file,
-        #             model_name,
-        #             parametrization + "-" + str(n_clusterss),
-        #             "",
-        #         )
-        #         if not os.path.exists(os.path.join(path_to_dir, "community")):
-        #             os.mkdir(os.path.join(path_to_dir, "community"))
-
-        #         np.save(
-        #             os.path.join(
-        #                 path_to_dir, "community", "transition_matrix_" + file + ".npy"
-        #             ),
-        #             transition_matrices[idx],
-        #         )
-        #         np.save(
-        #             os.path.join(
-        #                 path_to_dir, "community", "community_label_" + file + ".npy"
-        #             ),
-        #             community_labels_all[idx],
-        #         )
-
-        #         with open(
-        #             os.path.join(path_to_dir, "community", "hierarchy" + file + ".pkl"),
-        #             "wb",
-        #         ) as fp:  # Pickling
-        #             pickle.dump(communities_all[idx], fp)
 
     except Exception as e:
         logger.exception(f"Error in community_analysis: {e}")
         raise e
     finally:
         logger_config.remove_file_handler()
-
-
-# def create_community_bag(
-#     files: List[str],
-#     labels: List[np.ndarray],
-#     transition_matrices: List[np.ndarray],
-#     cut_tree: int,
-#     n_clusters: int,
-# ) -> Tuple:
-#     """Create community bag for given files and labels (Markov chain to tree -> community detection).
-#     Args:
-#         files (List[str]): List of file paths.
-#         labels (List[np.ndarray]): List of label arrays.
-#         transition_matrices (List[np.ndarray]): List of transition matrices.
-#         cut_tree (int): Cut line for tree.
-#         n_clusters (int): Number of clusters.
-
-#     Returns
-#         Tuple: Tuple containing list of community bags and list of trees.
-#     """
-#     trees = []
-#     communities_all = []
-#     for i, file in enumerate(files):
-#         _, usage = np.unique(labels[i], return_counts=True)
-#         T = graph_to_tree(usage, transition_matrices[i], n_clusters, merge_sel=1)
-#         trees.append(T)
-
-#         if cut_tree is not None:
-#             community_bag = traverse_tree_cutline(T, cutline=cut_tree)
-#             communities_all.append(community_bag)
-#             draw_tree(T)
-#         else:
-#             draw_tree(T)
-#             plt.pause(0.5)
-#             flag_1 = "no"
-#             while flag_1 == "no":
-#                 cutline = int(input("Where do you want to cut the Tree? 0/1/2/3/..."))
-#                 community_bag = traverse_tree_cutline(T, cutline=cutline)
-#                 logger.info(community_bag)
-#                 flag_2 = input("\nAre all motifs in the list? (yes/no/restart)")
-#                 if flag_2 == "no":
-#                     while flag_2 == "no":
-#                         add = input("Extend list or add in the end? (ext/end)")
-#                         if add == "ext":
-#                             motif_idx = int(input("Which motif number? "))
-#                             list_idx = int(
-#                                 input(
-#                                     "At which position in the list? (pythonic indexing starts at 0) "
-#                                 )
-#                             )
-#                             community_bag[list_idx].append(motif_idx)
-#                         if add == "end":
-#                             motif_idx = int(input("Which motif number? "))
-#                             community_bag.append([motif_idx])
-#                         logger.info(community_bag)
-#                         flag_2 = input("\nAre all motifs in the list? (yes/no/restart)")
-#                 if flag_2 == "restart":
-#                     continue
-#                 if flag_2 == "yes":
-#                     communities_all.append(community_bag)
-#                     flag_1 = "yes"
-
-#     return communities_all, trees
-
-
-# def get_community_labels_2(
-#     files: List[str],
-#     labels: List[np.ndarray],
-#     communities_all: List[List[List[int]]],
-# ) -> List[np.ndarray]:
-#     """
-#     Transform kmeans parameterized latent vector into communities.
-#     Get community labels for given files and community bags.
-
-#     Args:
-#         files (List[str]): List of file paths.
-#         labels (List[np.ndarray]): List of label arrays.
-#         communities_all (List[List[List[int]]]): List of community bags.
-
-#     Returns
-#         List[np.ndarray]: List of community labels for each file.
-#     """
-#     community_labels_all = []
-#     for k, file in enumerate(files):
-#         num_comm = len(communities_all[k])
-#         community_labels = np.zeros_like(labels[k])
-#         for i in range(num_comm):
-#             clust = np.array(communities_all[k][i])
-#             for j in range(len(clust)):
-#                 find_clust = np.where(labels[k] == clust[j])[0]
-#                 community_labels[find_clust] = i
-#         community_labels = np.int64(scipy.signal.medfilt(community_labels, 7))
-#         community_labels_all.append(community_labels)
-#     return community_labels_all
