@@ -65,16 +65,19 @@ def graph_to_tree(
     merge_sel: int = 1,
 ) -> nx.Graph:
     """
-    Convert a graph to a tree.
+    Convert a graph to a tree using hierarchical clustering of behavioral motifs.
+    
+    This function works with motif labels produced by any clustering algorithm
+    (K-means, GMM, HMM, or DBSCAN) to build a hierarchical community structure.
 
     Parameters
     ----------
     motif_usage : np.ndarray
-        The motif usage matrix.
+        The motif usage matrix representing how often each cluster/motif is used.
     transition_matrix : np.ndarray
-        The transition matrix of the graph.
+        The transition matrix of the graph showing transitions between motifs.
     n_clusters : int
-        The number of clusters.
+        The number of clusters (from K-means, GMM, HMM, or inferred from DBSCAN).
     merge_sel : int, optional
         The merge selection criterion. Defaults to 1.
         - 0: Merge nodes with highest transition probability.
@@ -83,7 +86,7 @@ def graph_to_tree(
     Returns
     -------
     nx.Graph
-        The tree.
+        The hierarchical tree structure of behavioral communities.
     """
     if merge_sel == 1:
         # motif_usage_temp = np.load(path_to_file+'/behavior_quantification/motif_usage.npy')
@@ -438,21 +441,26 @@ def bag_nodes_by_cutline(
     root: str = "Root",
 ):
     """
-    Bag nodes of a tree by a cutline.
+    Bag nodes of a tree by a cutline to create behavioral communities.
+    
+    This function works with hierarchical trees built from any clustering algorithm
+    (K-means, GMM, HMM, or DBSCAN) to create community structures at different
+    levels of the hierarchy.
 
     Parameters
     ----------
     tree : nx.Graph
-        The tree to be bagged.
+        The hierarchical tree to be bagged (built from behavioral motif transitions).
     cutline : int, optional
-        The cutline level. Defaults to 2.
+        The cutline level at which to cut the tree hierarchy. Defaults to 2.
     root : str, optional
         The root node of the tree. Defaults to 'Root'.
 
     Returns
     -------
     List[List[str]]
-        List of bags of nodes.
+        List of bags of nodes representing behavioral communities.
+        Each bag contains motif indices that belong to the same community.
     """
     if not tree.has_node(root):
         raise ValueError(f"Root node '{root}' not found in the tree.")

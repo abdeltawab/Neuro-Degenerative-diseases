@@ -8,15 +8,8 @@ class SegmentationAlgorithms(str, Enum):
     hmm = "hmm"
     kmeans = "kmeans"
     dbscan = "dbscan"
+    gmm = "gmm"
 
-dbscan_eps: float = Field(
-    default=0.5,
-    title="DBSCAN epsilon",
-)
-dbscan_min_samples: int = Field(
-    default=5,
-    title="DBSCAN min_samples",
-)
 
 class PoseEstimationFiletype(str, Enum):
     csv = "csv"
@@ -196,6 +189,8 @@ class ProjectSchema(BaseModel):
         default_factory=lambda: [
             SegmentationAlgorithms.hmm.value,
             SegmentationAlgorithms.kmeans.value,
+            SegmentationAlgorithms.gmm.value,
+            SegmentationAlgorithms.dbscan.value,  # Added DBSCAN
         ],
     )
     hmm_trained: bool = Field(
@@ -217,6 +212,45 @@ class ProjectSchema(BaseModel):
     n_init_kmeans: int = Field(
         default=15,
         title="N init kmeans",
+    )
+
+    # DBSCAN parameters (moved inside the class)
+    dbscan_eps: float = Field(
+        default=0.5,
+        title="DBSCAN epsilon",
+        description="The maximum distance between two samples for one to be considered as in the neighborhood of the other"
+    )
+    dbscan_min_samples: int = Field(
+        default=5,
+        title="DBSCAN min_samples",
+        description="The number of samples in a neighborhood for a point to be considered as a core point"
+    )
+
+    # GMM parameters (consolidated - removed duplicates)
+    gmm_covariance_type: str = Field(
+        default="full",
+        title="GMM covariance type",
+        description="Type of covariance parameters: 'full', 'tied', 'diag', 'spherical'"
+    )
+    gmm_max_iter: int = Field(
+        default=100,
+        title="GMM max iterations",
+        description="The number of EM iterations to perform"
+    )
+    gmm_n_init: int = Field(
+        default=1,
+        title="GMM number of initializations",
+        description="The number of initializations to perform"
+    )
+    gmm_init_params: str = Field(
+        default="kmeans",
+        title="GMM initialization method",
+        description="Method to initialize weights: 'kmeans', 'k-means++', 'random', 'random_from_data'"
+    )
+    gmm_random_state: int = Field(
+        default=42,
+        title="GMM random state",
+        description="Controls the random seed given to the method chosen to initialize the parameters"
     )
 
     # Video writer:

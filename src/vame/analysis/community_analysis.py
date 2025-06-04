@@ -247,7 +247,7 @@ def get_label_file_path(
         )
         file_path = os.path.join(path_to_dir, f"dbscan_label_{session}.npy")
     else:
-        # HMM and KMeans use n_clusters in path
+        # HMM, KMeans, and GMM use n_clusters in path
         path_to_dir = os.path.join(
             config["project_path"],
             "results",
@@ -285,7 +285,7 @@ def get_motif_labels(
     n_clusters : int
         Number of clusters.
     segmentation_algorithm : str
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
 
     Returns
     -------
@@ -392,7 +392,7 @@ def create_cohort_community_bag(
     trans_mat_full: np.ndarray,
     cut_tree: int | None,
     n_clusters: int,
-    segmentation_algorithm: Literal["hmm", "kmeans", "dbscan"],
+    segmentation_algorithm: Literal["hmm", "kmeans", "gmm", "dbscan"],  # Added GMM
 ) -> list:
     """
     Create cohort community bag for given motif labels, transition matrix,
@@ -411,7 +411,7 @@ def create_cohort_community_bag(
     n_clusters : int
         Number of clusters.
     segmentation_algorithm : str
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
 
     Returns
     -------
@@ -439,6 +439,7 @@ def create_cohort_community_bag(
             "dbscan",
         )
     else:
+        # Works for kmeans, hmm, and gmm
         results_dir = os.path.join(
             config["project_path"],
             "results",
@@ -508,7 +509,7 @@ def get_cohort_community_labels(
     median_filter_size: int = 7,
 ) -> List[np.ndarray]:
     """
-    Transform kmeans/hmm parameterized latent vector motifs into communities.
+    Transform kmeans/hmm/gmm parameterized latent vector motifs into communities.
     Get cohort community labels for given labels, and community bags.
 
     Parameters
@@ -571,6 +572,7 @@ def save_cohort_community_labels_per_file(
                 "",
             )
         else:
+            # Works for kmeans, hmm, and gmm
             path_to_dir = os.path.join(
                 config["project_path"],
                 "results",
@@ -653,7 +655,7 @@ def community(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     cut_tree : int, optional
@@ -695,6 +697,7 @@ def community(
                     )
                 )
             else:
+                # Works for kmeans, hmm, and gmm
                 path_to_dir = Path(
                     os.path.join(
                         config["project_path"],
@@ -774,6 +777,7 @@ def community(
                     motif_labels,
                 )
             else:
+                # Works for kmeans, hmm, and gmm
                 np.save(
                     os.path.join(
                         path_to_dir,

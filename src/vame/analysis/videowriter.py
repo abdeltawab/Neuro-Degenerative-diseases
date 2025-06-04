@@ -38,7 +38,7 @@ def get_cluster_label_file_path(
     session : str
         Session name
     n_clusters : int
-        Number of clusters (used for kmeans/hmm, ignored for dbscan)
+        Number of clusters (used for kmeans/hmm/gmm, ignored for dbscan)
     segmentation_algorithm : SegmentationAlgorithms
         Segmentation algorithm used
     flag : str
@@ -54,7 +54,7 @@ def get_cluster_label_file_path(
             # DBSCAN uses different naming convention without n_clusters
             label_file = f"dbscan_label_{session}.npy"
         else:
-            # HMM and KMeans use n_clusters in filename
+            # HMM, KMeans, and GMM use n_clusters in filename
             label_file = f"{n_clusters}_{segmentation_algorithm}_label_{session}.npy"
         
         return os.path.join(path_to_file, label_file)
@@ -105,7 +105,7 @@ def create_cluster_videos(
     flag : str
         Flag indicating the type of video (motif or community).
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     output_video_type : str, optional
@@ -240,6 +240,7 @@ def get_segmentation_path(segmentation_algorithm: SegmentationAlgorithms, n_clus
     if segmentation_algorithm == "dbscan":
         return "dbscan"
     else:
+        # Works for kmeans, hmm, and gmm
         return f"{segmentation_algorithm}-{n_clusters}"
 
 
@@ -270,7 +271,7 @@ def motif_videos(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
     video_type : str, optional
         Type of video. Default is '.mp4'.
     output_video_type : str, optional
@@ -304,6 +305,8 @@ def motif_videos(
 
         if segmentation_algorithm == "dbscan":
             logger.info("Creating DBSCAN cluster videos (dynamic cluster count)")
+        elif segmentation_algorithm == "gmm":
+            logger.info(f"Creating GMM cluster videos with {n_clusters} components")
         else:
             logger.info("Cluster size is: %d " % n_clusters)
             
@@ -374,7 +377,7 @@ def community_videos(
     config : dict
         Configuration parameters.
     segmentation_algorithm : SegmentationAlgorithms
-        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', or 'dbscan'.
+        Which segmentation algorithm to use. Options are 'hmm', 'kmeans', 'gmm', or 'dbscan'.
     cohort : bool, optional
         Flag indicating cohort analysis. Defaults to True.
     video_type : str, optional
@@ -409,6 +412,8 @@ def community_videos(
 
         if segmentation_algorithm == "dbscan":
             logger.info("Creating DBSCAN community videos (dynamic cluster count)")
+        elif segmentation_algorithm == "gmm":
+            logger.info(f"Creating GMM community videos with {n_clusters} components")
         else:
             logger.info("Cluster size is: %d " % n_clusters)
             

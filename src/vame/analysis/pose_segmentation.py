@@ -8,6 +8,7 @@ from typing import List, Tuple, Union
 from hmmlearn import hmm
 from sklearn.cluster import KMeans
 from sklearn.cluster import DBSCAN
+from sklearn.mixture import GaussianMixture  # Add GMM import
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 
@@ -259,7 +260,7 @@ def get_motif_usage(
     session_labels : np.ndarray
         Array of session labels.
     n_clusters : int, optional
-        Number of clusters. For KMeans and HMM, this should be set to get fixed-length output.
+        Number of clusters. For KMeans, GMM, and HMM, this should be set to get fixed-length output.
         For DBSCAN, leave as None to infer cluster count dynamically (excluding noise -1).
 
     Returns
@@ -281,7 +282,7 @@ def get_motif_usage(
 
         return motif_usage
 
-    # Fixed-length output for KMeans or HMM
+    # Fixed-length output for KMeans, GMM, or HMM
     motif_usage = np.zeros(n_clusters, dtype=int)
     for label in unique_labels:
         if label >= 0 and label < n_clusters:
@@ -314,15 +315,15 @@ def same_segmentation(
     latent_vectors : List[np.ndarray]
         List of latent vector arrays per session.
     n_clusters : int
-        Number of clusters (only used for KMeans and HMM).
+        Number of clusters (only used for KMeans, GMM, and HMM).
     segmentation_algorithm : str
-        One of: "kmeans", "hmm", or "dbscan".
+        One of: "kmeans", "gmm", "hmm", or "dbscan".
 
     Returns
     -------
     Tuple of:
         - labels: List of np.ndarray of predicted motif labels per session.
-        - cluster_centers: List of cluster centers (KMeans only).
+        - cluster_centers: List of cluster centers (KMeans and GMM only).
         - motif_usages: List of motif usage arrays per session.
     """
     labels = []
@@ -342,6 +343,19 @@ def same_segmentation(
         ).fit(latent_vector_cat)
         combined_labels = kmeans.labels_
         clust_center = kmeans.cluster_centers_
+
+    elif segmentation_algorithm == "gmm":
+        logger.info(f"Using Gaussian Mixture Model with {n_clusters} components.")
+        gmm = GaussianMixture(
+            n_components=n_clusters,
+            covariance_type=cfg.get("gmm_covariance_type", "full"),
+            max_iter=cfg.get("gmm_max_iter", 100),
+            n_init=cfg.get("gmm_n_init", 1),
+            init_params=cfg.get("gmm_init_params", "kmeans"),
+            random_state=cfg.get("gmm_random_state", 42),
+        ).fit(latent_vector_cat)
+        combined_labels = gmm.predict(latent_vector_cat)
+        clust_center = gmm.means_
 
     elif segmentation_algorithm == "hmm":
         logger.info(f"Using HMM with {n_clusters} states.")
@@ -392,12 +406,12 @@ def same_segmentation(
         session_labels = combined_labels[idx: idx + session_len]
         labels.append(session_labels)
 
-        if segmentation_algorithm == "kmeans":
+        if segmentation_algorithm in ["kmeans", "gmm"]:
             cluster_centers.append(clust_center)
         else:
             cluster_centers.append(None)
 
-        # Motif usage: fixed length for kmeans/hmm, dynamic for dbscan
+        # Motif usage: fixed length for kmeans/gmm/hmm, dynamic for dbscan
         usage = get_motif_usage(
             session_labels,
             None if segmentation_algorithm == "dbscan" else n_clusters
@@ -435,6 +449,19 @@ def individual_segmentation(
             session_labels = kmeans.labels_
             cluster_centers.append(kmeans.cluster_centers_)
             
+        elif segmentation_algorithm == "gmm":
+            # Train a separate GMM on this session's latent vectors
+            gmm = GaussianMixture(
+                n_components=n_clusters,
+                covariance_type=cfg.get("gmm_covariance_type", "full"),
+                max_iter=cfg.get("gmm_max_iter", 100),
+                n_init=cfg.get("gmm_n_init", 1),
+                init_params=cfg.get("gmm_init_params", "kmeans"),
+                random_state=cfg.get("gmm_random_state", 42),
+            ).fit(data)
+            session_labels = gmm.predict(data)
+            cluster_centers.append(gmm.means_)  # Store component means
+            
         elif segmentation_algorithm == "hmm":
             # Train a separate HMM on this session's latent vectors
             hmm_model = hmm.GaussianHMM(
@@ -471,7 +498,7 @@ def individual_segmentation(
 
         labels.append(session_labels)
         
-        # Compute motif usage (fixed length for kmeans/hmm, dynamic for DBSCAN)
+        # Compute motif usage (fixed length for kmeans/gmm/hmm, dynamic for DBSCAN)
         motif_usage = get_motif_usage(
             session_labels, 
             None if segmentation_algorithm == "dbscan" else n_clusters
@@ -542,6 +569,8 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                         logger.info("Apply individual segmentation for each session using DBSCAN")
                     elif seg == "hmm":
                         logger.info(f"Apply individual segmentation for each session with HMM ({n_clusters} states)")
+                    elif seg == "gmm":
+                        logger.info(f"Apply individual segmentation for each session with GMM ({n_clusters} components)")
                     else:
                         logger.info(f"Apply individual segmentation for each session with {n_clusters} clusters")
 
@@ -557,6 +586,8 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                         logger.info("Apply the same segmentation for all sessions using DBSCAN")
                     elif seg == "hmm":
                         logger.info(f"Apply the same segmentation for all sessions with HMM ({n_clusters} states)")
+                    elif seg == "gmm":
+                        logger.info(f"Apply the same segmentation for all sessions with GMM ({n_clusters} components)")
                     else:
                         logger.info(f"Apply the same segmentation for all sessions with {n_clusters} clusters")
 
@@ -572,6 +603,8 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                     logger.info(f"Segmentation with DBSCAN already exists for model {model_name}")
                 elif seg == "hmm":
                     logger.info(f"Segmentation with HMM ({n_clusters} states) already exists for model {model_name}")
+                elif seg == "gmm":
+                    logger.info(f"Segmentation with GMM ({n_clusters} components) already exists for model {model_name}")
                 else:
                     logger.info(f"Segmentation with {n_clusters} k-means clusters already exists for model {model_name}")
 
@@ -596,6 +629,8 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                             logger.info("Apply individual segmentation for each session using DBSCAN")
                         elif seg == "hmm":
                             logger.info(f"Apply individual segmentation for each session with HMM ({n_clusters} states)")
+                        elif seg == "gmm":
+                            logger.info(f"Apply individual segmentation for each session with GMM ({n_clusters} components)")
                         else:
                             logger.info(f"Apply individual segmentation for each session with {n_clusters} clusters")
 
@@ -611,6 +646,8 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                             logger.info("Apply the same segmentation for all sessions using DBSCAN")
                         elif seg == "hmm":
                             logger.info(f"Apply the same segmentation for all sessions with HMM ({n_clusters} states)")
+                        elif seg == "gmm":
+                            logger.info(f"Apply the same segmentation for all sessions with GMM ({n_clusters} components)")
                         else:
                             logger.info(f"Apply the same segmentation for all sessions with {n_clusters} clusters")
 
@@ -633,7 +670,7 @@ def segment_session(config: dict, save_logs: bool = False) -> None:
                     label_filename = f"{'' if seg == 'dbscan' else str(n_clusters) + '_'}{seg}_label_{session}.npy"
                     np.save(os.path.join(save_dir, label_filename), labels[idx])
 
-                    if seg == "kmeans":
+                    if seg in ["kmeans", "gmm"]:
                         np.save(os.path.join(save_dir, f"cluster_center_{session}.npy"), cluster_center[idx])
 
                     np.save(os.path.join(save_dir, f"latent_vector_{session}.npy"), latent_vectors[idx])
