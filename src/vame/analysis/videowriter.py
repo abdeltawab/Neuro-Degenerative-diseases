@@ -27,9 +27,12 @@ def get_cluster_label_file_path(
     n_clusters: int,
     segmentation_algorithm: SegmentationAlgorithms,
     flag: str,
+    cohort: bool = True,
+    use_sequential_for_videos: bool = True,  # NEW PARAMETER
 ) -> str:
     """
-    Get the path to the cluster label file based on segmentation algorithm.
+    FIXED: Get the path to the cluster label file based on segmentation algorithm.
+    Now properly supports sequential video labels for clean numbering.
     
     Parameters
     ----------
@@ -43,6 +46,10 @@ def get_cluster_label_file_path(
         Segmentation algorithm used
     flag : str
         Flag indicating motif or community
+    cohort : bool, optional
+        Flag for cohort analysis (only used for community)
+    use_sequential_for_videos : bool, optional
+        Whether to use sequential video labels for clean numbering (default: True)
         
     Returns
     -------
@@ -51,13 +58,40 @@ def get_cluster_label_file_path(
     """
     if flag == "motif":
         if segmentation_algorithm == "dbscan":
-            # DBSCAN uses different naming convention without n_clusters
-            label_file = f"dbscan_label_{session}.npy"
+            if use_sequential_for_videos:
+                # Check for sequential video labels first (PRIORITY)
+                sequential_shared_path = os.path.join(path_to_file, f"dbscan_video_sequential_label_{session}.npy")
+                if os.path.exists(sequential_shared_path):
+                    logger.info(f"Using SEQUENTIAL VIDEO LABELS for clean numbering: {session}")
+                    return sequential_shared_path
+            
+            # Fall back to original behavior
+            shared_numbering_path = os.path.join(path_to_file, f"dbscan_shared_numbering_label_{session}.npy")
+            group_aware_path = os.path.join(path_to_file, f"dbscan_group_aware_label_{session}.npy")
+            regular_path = os.path.join(path_to_file, f"dbscan_label_{session}.npy")
+            
+            if os.path.exists(shared_numbering_path):
+                logger.info(f"Using shared numbering DBSCAN results for video creation: {session}")
+                return shared_numbering_path
+            elif os.path.exists(group_aware_path):
+                logger.info(f"Using group-aware DBSCAN results for video creation: {session}")
+                return group_aware_path
+            elif os.path.exists(regular_path):
+                logger.info(f"Using regular DBSCAN results for video creation: {session}")
+                return regular_path
+            else:
+                return regular_path  # Will cause error if doesn't exist
         else:
+            if use_sequential_for_videos:
+                # Check for sequential video labels for other algorithms
+                sequential_path = os.path.join(path_to_file, f"{segmentation_algorithm}_video_sequential_label_{session}.npy")
+                if os.path.exists(sequential_path):
+                    logger.info(f"Using SEQUENTIAL VIDEO LABELS for {segmentation_algorithm.upper()}: {session}")
+                    return sequential_path
+            
             # HMM, KMeans, and GMM use n_clusters in filename
             label_file = f"{n_clusters}_{segmentation_algorithm}_label_{session}.npy"
-        
-        return os.path.join(path_to_file, label_file)
+            return os.path.join(path_to_file, label_file)
     
     elif flag == "community":
         # Community logic remains the same for all algorithms
@@ -86,9 +120,11 @@ def create_cluster_videos(
     cohort: bool = True,
     output_video_type: str = ".mp4",
     tqdm_logger_stream: Union[TqdmToLogger, None] = None,
+    use_sequential_for_videos: bool = True,  # NEW PARAMETER
 ) -> None:
     """
-    Generate cluster videos and save them to filesystem on project folder.
+    FIXED: Generate cluster videos with clean sequential numbering.
+    Now properly handles sequential video labels for clean 0-N numbering.
 
     Parameters
     ----------
@@ -112,6 +148,8 @@ def create_cluster_videos(
         Type of output video. Default is '.mp4'.
     tqdm_logger_stream : TqdmToLogger, optional
         Tqdm logger stream. Default is None.
+    use_sequential_for_videos : bool, optional
+        Whether to use sequential video labels for clean numbering. Default is True.
 
     Returns
     -------
@@ -123,29 +161,44 @@ def create_cluster_videos(
     if flag == "motif":
         logger.info("Motif videos getting created for " + session + " ...")
         label_file_path = get_cluster_label_file_path(
-            path_to_file, session, n_clusters, segmentation_algorithm, flag
+            path_to_file, session, n_clusters, segmentation_algorithm, flag, cohort, use_sequential_for_videos
         )
+        
+        if not os.path.exists(label_file_path):
+            logger.error(f"Label file not found: {label_file_path}")
+            raise FileNotFoundError(f"Label file not found: {label_file_path}")
+            
         labels = np.load(label_file_path)
+        
+        # Check if using sequential video labels
+        using_sequential = "video_sequential" in label_file_path
+        
+        if using_sequential:
+            logger.info(f"Using SEQUENTIAL VIDEO LABELS - videos will have clean 0-N numbering for {session}")
+        else:
+            logger.info(f"Using original labels - videos may have gaps in numbering for {session}")
         
     elif flag == "community":
         if cohort:
             logger.info("Cohort community videos getting created for " + session + " ...")
-            labels = np.load(
-                os.path.join(
-                    path_to_file,
-                    "community",
-                    "cohort_community_label_" + session + ".npy",
-                )
+            community_label_path = os.path.join(
+                path_to_file,
+                "community",
+                "cohort_community_label_" + session + ".npy",
             )
         else:
             logger.info("Community videos getting created for " + session + " ...")
-            labels = np.load(
-                os.path.join(
-                    path_to_file,
-                    "community",
-                    "community_label_" + session + ".npy",
-                )
+            community_label_path = os.path.join(
+                path_to_file,
+                "community",
+                "community_label_" + session + ".npy",
             )
+        
+        if not os.path.exists(community_label_path):
+            logger.error(f"Community label file not found: {community_label_path}")
+            raise FileNotFoundError(f"Community label file not found: {community_label_path}")
+            
+        labels = np.load(community_label_path)
 
     video_file_path = os.path.join(
         config["project_path"],
@@ -169,8 +222,12 @@ def create_cluster_videos(
         unique_labels = unique_labels[unique_labels != -1]
         logger.info(f"DBSCAN found {len(unique_labels)} clusters (excluding noise)")
 
+    # Log the motif range for verification
+    if len(unique_labels) > 0:
+        logger.info(f"Creating videos for motifs: {sorted(unique_labels)} (range: {min(unique_labels)}-{max(unique_labels)})")
+
     for cluster in unique_labels:
-        logger.info("Cluster: %d" % (cluster))
+        logger.info("Creating video for cluster: %d" % (cluster))
         cluster_lbl = np.where(labels == cluster)
         cluster_lbl = cluster_lbl[0]
         if not cluster_lbl.size:
@@ -181,13 +238,13 @@ def create_cluster_videos(
             output = os.path.join(
                 path_to_file,
                 "cluster_videos",
-                session + f"-motif_%d{output_video_type}" % cluster,
+                session + f"-motif_{cluster:d}{output_video_type}",
             )
         if flag == "community":
             output = os.path.join(
                 path_to_file,
                 "community_videos",
-                session + f"-community_%d{output_video_type}" % cluster,
+                session + f"-community_{cluster:d}{output_video_type}",
             )
 
         if output_video_type == ".avi":
@@ -210,10 +267,14 @@ def create_cluster_videos(
             idx = cluster_lbl[num]
             capture.set(1, idx + cluster_start)
             ret, frame = capture.read()
-            if output_video_type == ".avi":
-                video_writer.write(frame)
-            elif output_video_type == ".mp4":
-                video_writer.append_data(frame)
+            if ret:  # Check if frame was read successfully
+                if output_video_type == ".avi":
+                    video_writer.write(frame)
+                elif output_video_type == ".mp4":
+                    video_writer.append_data(frame)
+            else:
+                logger.warning(f"Could not read frame at index {idx + cluster_start}")
+                
         if output_video_type == ".avi":
             video_writer.release()
         elif output_video_type == ".mp4":
@@ -244,6 +305,70 @@ def get_segmentation_path(segmentation_algorithm: SegmentationAlgorithms, n_clus
         return f"{segmentation_algorithm}-{n_clusters}"
 
 
+def detect_and_get_dbscan_path(
+    config: dict,
+    session: str,
+    model_name: str,
+    segmentation_algorithm: str
+) -> str:
+    """
+    Detect whether to use shared numbering, group-aware, or regular DBSCAN path.
+    
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary
+    session : str
+        Session name
+    model_name : str
+        Model name
+    segmentation_algorithm : str
+        Segmentation algorithm
+        
+    Returns
+    -------
+    str
+        Appropriate path for DBSCAN results
+    """
+    if segmentation_algorithm != "dbscan":
+        return get_segmentation_path(segmentation_algorithm, config["n_clusters"])
+    
+    # Check for shared numbering results first
+    shared_numbering_path = os.path.join(
+        config["project_path"],
+        "results",
+        session,
+        model_name,
+        "dbscan_shared_numbering"
+    )
+    
+    # Check if shared numbering label file exists
+    shared_label_file = os.path.join(
+        shared_numbering_path,
+        f"dbscan_shared_numbering_label_{session}.npy"
+    )
+    
+    if os.path.exists(shared_label_file):
+        logger.info(f"Using shared numbering DBSCAN path for session {session}")
+        return "dbscan_shared_numbering"
+    
+    # Check for group-aware results second
+    group_aware_path = os.path.join(
+        config["project_path"],
+        "results",
+        session,
+        model_name,
+        "dbscan_group_aware"
+    )
+    
+    if os.path.exists(group_aware_path):
+        logger.info(f"Using group-aware DBSCAN path for session {session}")
+        return "dbscan_group_aware"
+    else:
+        logger.info(f"Using regular DBSCAN path for session {session}")
+        return "dbscan"
+
+
 @save_state(model=MotifVideosFunctionSchema)
 def motif_videos(
     config: dict,
@@ -251,20 +376,11 @@ def motif_videos(
     video_type: str = ".mp4",
     output_video_type: str = ".mp4",
     save_logs: bool = False,
+    use_sequential_numbering: bool = True,  # NEW PARAMETER
 ) -> None:
     """
-    Generate motif videos and save them to filesystem.
-    Fills in the values in the "motif_videos" key of the states.json file.
-    Files are saved at:
-    - project_name/
-        - results/
-            - session/
-                - model_name/
-                    - segmentation_algorithm-n_clusters/ (or just 'dbscan' for DBSCAN)
-                        - cluster_videos/
-                            - session-motif_0.mp4
-                            - session-motif_1.mp4
-                            - ...
+    FIXED: Generate motif videos with clean sequential numbering.
+    Now creates videos with clean 0-N numbering instead of gaps like 0, 4, 72, 96.
 
     Parameters
     ----------
@@ -278,6 +394,8 @@ def motif_videos(
         Type of output video. Default is '.mp4'.
     save_logs : bool, optional
         Save logs to filesystem. Default is False.
+    use_sequential_numbering : bool, optional
+        Whether to use sequential video labels for clean numbering. Default is True.
 
     Returns
     -------
@@ -293,6 +411,11 @@ def motif_videos(
         n_clusters = config["n_clusters"]
 
         logger.info(f"Creating motif videos for algorithm: {segmentation_algorithm}...")
+        
+        if use_sequential_numbering:
+            logger.info("Using SEQUENTIAL NUMBERING for clean video names (0, 1, 2, 3...)")
+        else:
+            logger.info("Using ORIGINAL NUMBERING (may have gaps)")
 
         # Get sessions
         if config["all_data"] in ["Yes", "yes"]:
@@ -303,16 +426,22 @@ def motif_videos(
                 action_message="write motif videos",
             )
 
+        # Log algorithm-specific information
         if segmentation_algorithm == "dbscan":
-            logger.info("Creating DBSCAN cluster videos (dynamic cluster count)")
+            individual_segmentation = config.get("individual_segmentation", False)
+            
+            if individual_segmentation:
+                logger.info("Creating DBSCAN cluster videos (individual segmentation)")
+            else:
+                logger.info("Creating DBSCAN cluster videos (cross-session behavioral consistency)")
         elif segmentation_algorithm == "gmm":
             logger.info(f"Creating GMM cluster videos with {n_clusters} components")
         else:
             logger.info("Cluster size is: %d " % n_clusters)
             
         for session in sessions:
-            # Get the correct segmentation path
-            segmentation_path = get_segmentation_path(segmentation_algorithm, n_clusters)
+            # Use detection function for proper path
+            segmentation_path = detect_and_get_dbscan_path(config, session, model_name, segmentation_algorithm)
             
             path_to_file = os.path.join(
                 config["project_path"],
@@ -335,8 +464,15 @@ def motif_videos(
                 segmentation_algorithm=segmentation_algorithm,
                 output_video_type=output_video_type,
                 tqdm_logger_stream=tqdm_logger_stream,
+                use_sequential_for_videos=use_sequential_numbering,
             )
-        logger.info("All videos have been created!")
+        
+        if use_sequential_numbering:
+            logger.info("All videos have been created with CLEAN SEQUENTIAL NUMBERING!")
+            logger.info("Video names: session-motif_0.mp4, session-motif_1.mp4, session-motif_2.mp4, ...")
+        else:
+            logger.info("All videos have been created!")
+            
     except Exception as e:
         logger.exception(f"Error in motif_videos: {e}")
         raise e
@@ -352,25 +488,10 @@ def community_videos(
     video_type: str = ".mp4",
     save_logs: bool = False,
     output_video_type: str = ".mp4",
+    use_sequential_numbering: bool = True,  # NEW PARAMETER
 ) -> None:
     """
-    Generate community videos and save them to filesystem on project community_videos folder.
-    Fills in the values in the "community_videos" key of the states.json file.
-    Files are saved at:
-
-    1. If cohort is True:
-    TODO: Add cohort analysis
-
-    2. If cohort is False:
-    - project_name/
-        - results/
-            - file_name/
-                - model_name/
-                    - segmentation_algorithm-n_clusters/ (or just 'dbscan' for DBSCAN)
-                        - community_videos/
-                            - file_name-community_0.mp4
-                            - file_name-community_1.mp4
-                            - ...
+    FIXED: Generate community videos with clean sequential numbering.
 
     Parameters
     ----------
@@ -386,6 +507,8 @@ def community_videos(
         Save logs to filesystem. Default is False.
     output_video_type : str, optional
         Type of output video. Default is '.mp4'.
+    use_sequential_numbering : bool, optional
+        Whether to use sequential video labels for clean numbering. Default is True.
 
     Returns
     -------
@@ -410,16 +533,27 @@ def community_videos(
                 action_message="write community videos",
             )
 
+        logger.info(f"Creating community videos for algorithm: {segmentation_algorithm}...")
+        
+        if use_sequential_numbering:
+            logger.info("Using SEQUENTIAL NUMBERING for clean community video names")
+        
+        # Log algorithm-specific information
         if segmentation_algorithm == "dbscan":
-            logger.info("Creating DBSCAN community videos (dynamic cluster count)")
+            individual_segmentation = config.get("individual_segmentation", False)
+            
+            if individual_segmentation:
+                logger.info("Creating DBSCAN community videos (individual segmentation)")
+            else:
+                logger.info("Creating DBSCAN community videos (cross-session behavioral consistency)")
         elif segmentation_algorithm == "gmm":
             logger.info(f"Creating GMM community videos with {n_clusters} components")
         else:
             logger.info("Cluster size is: %d " % n_clusters)
             
         for session in sessions:
-            # Get the correct segmentation path
-            segmentation_path = get_segmentation_path(segmentation_algorithm, n_clusters)
+            # Use detection function for proper path
+            segmentation_path = detect_and_get_dbscan_path(config, session, model_name, segmentation_algorithm)
             
             path_to_file = os.path.join(
                 config["project_path"],
@@ -443,12 +577,173 @@ def community_videos(
                 cohort=cohort,
                 tqdm_logger_stream=tqdm_logger_stream,
                 output_video_type=output_video_type,
+                use_sequential_for_videos=use_sequential_numbering,
             )
 
-        logger.info("All videos have been created!")
+        if use_sequential_numbering:
+            logger.info("All community videos have been created with CLEAN SEQUENTIAL NUMBERING!")
+        else:
+            logger.info("All community videos have been created!")
 
     except Exception as e:
         logger.exception(f"Error in community_videos: {e}")
         raise e
     finally:
         logger_config.remove_file_handler()
+
+
+# UTILITY FUNCTIONS
+
+def check_sequential_labels_status(config: dict) -> None:
+    """
+    Check if sequential video labels exist for all sessions.
+    
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary
+    """
+    
+    sessions = config["session_names"]
+    model_name = config["model_name"]
+    
+    print("\n" + "="*80)
+    print("SEQUENTIAL VIDEO LABELS STATUS")
+    print("="*80)
+    
+    for session in sessions:
+        print(f"\n📁 SESSION: {session}")
+        
+        # Check different paths
+        paths_to_check = [
+            ("Shared Numbering", os.path.join(
+                config["project_path"], "results", session, model_name, 
+                "dbscan_shared_numbering", f"dbscan_video_sequential_label_{session}.npy"
+            )),
+            ("Group Aware", os.path.join(
+                config["project_path"], "results", session, model_name, 
+                "dbscan_group_aware", f"dbscan_video_sequential_label_{session}.npy"
+            )),
+            ("Regular DBSCAN", os.path.join(
+                config["project_path"], "results", session, model_name, 
+                "dbscan", f"dbscan_video_sequential_label_{session}.npy"
+            )),
+        ]
+        
+        sequential_found = False
+        for path_type, path in paths_to_check:
+            if os.path.exists(path):
+                labels = np.load(path)
+                unique_labels = np.unique(labels[labels != -1])
+                print(f"   ✅ {path_type}: Sequential labels 0-{max(unique_labels) if len(unique_labels) > 0 else 'N/A'}")
+                sequential_found = True
+                break
+        
+        if not sequential_found:
+            print(f"   ❌ No sequential video labels found")
+            print(f"      Run segment_session() with create_video_labels=True")
+
+
+def create_sequential_labels_manually(config: dict) -> None:
+    """
+    Manually create sequential video labels if they don't exist.
+    
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary
+    """
+    
+    from .pose_segmentation import create_sequential_video_labels
+    
+    sessions = config["session_names"]
+    model_name = config["model_name"]
+    
+    print("\n" + "="*60)
+    print("CREATING SEQUENTIAL VIDEO LABELS MANUALLY")
+    print("="*60)
+    
+    labels_list = []
+    
+    for session in sessions:
+        # Try to find existing labels
+        label_paths = [
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan_shared_numbering", f"dbscan_shared_numbering_label_{session}.npy"),
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan_group_aware", f"dbscan_group_aware_label_{session}.npy"),
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan", f"dbscan_label_{session}.npy"),
+        ]
+        
+        session_labels = None
+        for path in label_paths:
+            if os.path.exists(path):
+                session_labels = np.load(path)
+                print(f"✓ Found labels for {session}")
+                break
+        
+        if session_labels is None:
+            print(f"❌ No labels found for {session}")
+            return
+        
+        labels_list.append(session_labels)
+    
+    # Create sequential labels
+    create_sequential_video_labels(config, sessions, labels_list, model_name, "dbscan")
+    print("\n✅ Sequential video labels created successfully!")
+
+
+def preview_video_names(config: dict, max_videos_per_session: int = 5) -> None:
+    """
+    Preview what video names will look like with sequential numbering.
+    
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary
+    max_videos_per_session : int
+        Maximum number of video names to show per session
+    """
+    
+    sessions = config["session_names"]
+    model_name = config["model_name"]
+    
+    print("\n" + "="*80)
+    print("VIDEO NAMING PREVIEW")
+    print("="*80)
+    
+    for session in sessions:
+        print(f"\n🎬 SESSION: {session}")
+        
+        # Try to find sequential labels
+        sequential_paths = [
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan_shared_numbering", f"dbscan_video_sequential_label_{session}.npy"),
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan_group_aware", f"dbscan_video_sequential_label_{session}.npy"),
+            os.path.join(config["project_path"], "results", session, model_name, 
+                        "dbscan", f"dbscan_video_sequential_label_{session}.npy"),
+        ]
+        
+        sequential_labels = None
+        for path in sequential_paths:
+            if os.path.exists(path):
+                sequential_labels = np.load(path)
+                break
+        
+        if sequential_labels is not None:
+            unique_labels = np.unique(sequential_labels[sequential_labels != -1])
+            print(f"   📊 Sequential motifs: {len(unique_labels)} total")
+            print(f"   📝 Video names will be:")
+            
+            for i, motif in enumerate(sorted(unique_labels)[:max_videos_per_session]):
+                video_name = f"{session}-motif_{motif}.mp4"
+                print(f"      • {video_name}")
+            
+            if len(unique_labels) > max_videos_per_session:
+                print(f"      • ... and {len(unique_labels) - max_videos_per_session} more")
+        else:
+            print(f"   ❌ No sequential labels found")
+            print(f"      Need to create sequential labels first")
+
